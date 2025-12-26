@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { DEMO_ORG_ID } from "@/lib/constants";
+import { useAuth } from "@/context/AuthProvider"; // <-- YENİ BEYİN
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { 
   Plus, ChevronDown, ChevronUp, Sparkles, 
-  Trash2, Edit2, CheckCircle, Ban, Search
+  Trash2, Edit2, CheckCircle, Ban, Search, Loader2
 } from "lucide-react";
 
 // --- TİP TANIMLARI ---
@@ -44,6 +44,8 @@ type CandidateSimple = {
 };
 
 export default function OpenPositionsPage() {
+  const { orgId } = useAuth(); // <-- DİNAMİK ORG ID
+  
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -72,12 +74,15 @@ export default function OpenPositionsPage() {
 
   // 1. VERİLERİ GETİR (Sadece Açık İlanlar)
   const fetchData = async () => {
+    if (!orgId) return; // Org ID yoksa bekle
+
     setLoading(true);
     
+    // Sadece kendi organizasyonuna ait açık ilanları çek
     const { data: jobs } = await supabase
       .from("job_openings")
       .select(`*, positions(title)`)
-      .eq("organization_id", DEMO_ORG_ID)
+      .eq("organization_id", orgId) // <-- FİLTRELEME
       .eq("status", "open") 
       .order("created_at", { ascending: false });
 
@@ -95,13 +100,20 @@ export default function OpenPositionsPage() {
 
     setOpenings(formattedJobs);
     
-    const { data: posList } = await supabase.from("positions").select("id, title").eq("organization_id", DEMO_ORG_ID);
+    // Pozisyon listesini çek (Dropdown için)
+    const { data: posList } = await supabase
+        .from("positions")
+        .select("id, title")
+        .eq("organization_id", orgId); // <-- FİLTRELEME
+
     if (posList) setPositions(posList);
     
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { 
+      fetchData(); 
+  }, [orgId]); // OrgID değişince tekrar çalış
 
   // --- YARDIMCI FONKSİYONLAR ---
 
@@ -132,6 +144,8 @@ export default function OpenPositionsPage() {
   // 1. KAYDETME (Yeni veya Düzenleme)
   const handleSaveOpening = async () => {
     if (!selectedPosId || !targetDate) return;
+    if (!orgId) return alert("Organization ID missing. Please login again.");
+    
     setIsAnalyzing(true); 
 
     try {
@@ -149,7 +163,7 @@ export default function OpenPositionsPage() {
         } else {
             // YENİ EKLEME
             const { data: newJob, error } = await supabase.from("job_openings").insert([{
-                organization_id: DEMO_ORG_ID,
+                organization_id: orgId, // <-- EKLERKEN BU ID İLE
                 position_id: selectedPosId,
                 target_date: targetDate,
                 description: description,
@@ -162,6 +176,8 @@ export default function OpenPositionsPage() {
 
         // AI Analizini Tetikle
         const posTitle = positions.find(p => p.id === selectedPosId)?.title;
+        
+        // Not: API tarafında da Auth kontrolü yapılması gerekebilir ileride
         await fetch("/api/match-candidates", {
             method: "POST",
             body: JSON.stringify({
@@ -169,7 +185,8 @@ export default function OpenPositionsPage() {
                 positionTitle: posTitle,
                 description: description,
                 skills: selectedSkills,
-                targetDate
+                targetDate,
+                orgId: orgId // API'ye Org ID gönderiyoruz
             })
         });
 
@@ -239,14 +256,14 @@ export default function OpenPositionsPage() {
                 openingId: job.id,
                 positionTitle: job.position_title,
                 description: job.description,
-                skills: job.highlighted_skills
+                skills: job.highlighted_skills,
+                orgId: orgId // API'ye Org ID
             })
         });
         
         const res = await response.json();
         if(res.success) {
              alert(`Analysis Complete! Found ${res.count} scored candidates.`);
-             // Veriyi tazelemek için akordeonu kapatıp açıyoruz (veya veri çekiyoruz)
              fetchData();
         } else {
              alert("Analysis failed: " + (res.error || res.message));
@@ -271,7 +288,7 @@ export default function OpenPositionsPage() {
   // Aday Arama
   const handleCandidateSearch = async (term: string) => {
     setCandidateSearchTerm(term);
-    if (term.length < 2) {
+    if (term.length < 2 || !orgId) {
         setCandidateSearchResults([]);
         return;
     }
@@ -279,7 +296,7 @@ export default function OpenPositionsPage() {
     const { data } = await supabase
         .from("candidates")
         .select("id, full_name, summary")
-        .eq("organization_id", DEMO_ORG_ID)
+        .eq("organization_id", orgId) // <-- SADECE KENDİ ADAYLARIMIZ
         .ilike("full_name", `%${term}%`)
         .limit(5);
 
@@ -302,7 +319,7 @@ export default function OpenPositionsPage() {
     const updateData: any = {
         status: 'closed',
         close_reason: closeReason,
-        closed_at: new Date().toISOString() // BUGÜNÜN TARİHİ
+        closed_at: new Date().toISOString()
     };
 
     if (closeReason === "hired" && selectedCandidate) {
@@ -318,7 +335,7 @@ export default function OpenPositionsPage() {
         alert("Error closing job: " + error.message);
     } else {
         setIsCloseDialogOpen(false);
-        fetchData(); // Listeden düşecek
+        fetchData(); 
     }
   };
 
@@ -365,6 +382,11 @@ export default function OpenPositionsPage() {
         </div>
     );
   };
+
+  // Loading durumu
+  if (loading && openings.length === 0) {
+      return <div className="p-12 text-center text-slate-400"><Loader2 className="animate-spin inline mr-2"/> Loading recruitments...</div>;
+  }
 
   return (
     <div className="space-y-6">

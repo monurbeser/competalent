@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { DEMO_ORG_ID } from "@/lib/constants";
-import { Users, Briefcase, CheckCircle, TrendingUp, ArrowRight, Star } from "lucide-react";
+import { useAuth } from "@/context/AuthProvider"; // <-- YENİ BEYNİMİZ
+import { Users, Briefcase, CheckCircle, TrendingUp, ArrowRight, Star, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 export default function DashboardPage() {
+  const { orgId } = useAuth(); // <-- Org ID'yi Context'ten çekiyoruz
+  
   const [stats, setStats] = useState({
     totalCandidates: 0,
     activeJobs: 0,
@@ -18,27 +20,30 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Org ID yoksa (henüz yüklenmediyse) veya boşsa sorgu atma
+    if (!orgId) return;
+
     async function fetchDashboardData() {
       setLoading(true);
 
-      // 1. TOPLAM ADAY SAYISI
+      // 1. TOPLAM ADAY SAYISI (Kendi Organizasyonu)
       const { count: candidateCount } = await supabase
         .from("candidates")
-        .select("*", { count: "exact", head: true }) // head: true sadece sayıyı getirir, veriyi değil (performans için)
-        .eq("organization_id", DEMO_ORG_ID);
+        .select("*", { count: "exact", head: true }) 
+        .eq("organization_id", orgId); // <-- DİNAMİK ID
 
       // 2. AÇIK POZİSYONLAR
       const { count: openJobCount } = await supabase
         .from("job_openings")
         .select("*", { count: "exact", head: true })
-        .eq("organization_id", DEMO_ORG_ID)
+        .eq("organization_id", orgId) // <-- DİNAMİK ID
         .eq("status", "open");
 
-      // 3. İŞE ALINANLAR (Kapanmış ve Sebebi 'Hired' olanlar)
+      // 3. İŞE ALINANLAR
       const { count: hiredCount } = await supabase
         .from("job_openings")
         .select("*", { count: "exact", head: true })
-        .eq("organization_id", DEMO_ORG_ID)
+        .eq("organization_id", orgId) // <-- DİNAMİK ID
         .eq("status", "closed")
         .eq("close_reason", "hired");
 
@@ -48,20 +53,26 @@ export default function DashboardPage() {
         totalHired: hiredCount || 0
       });
 
-      // 4. SON EŞLEŞMELER (Puanı yüksek olanlar)
-      // İlişkili tablolardan Aday Adı ve Pozisyon Başlığını çekiyoruz
+      // 4. SON EŞLEŞMELER
+      // Burada matches tablosunda organization_id olmayabilir, 
+      // ama job_openings üzerinden filtrelemek gerekebilir.
+      // Ancak RLS (Güvenlik) açık olduğu için, kullanıcı zaten sadece kendi adaylarını görür.
+      // Yine de güvenli olsun diye job_openings ilişkisi üzerinden filtreleyelim.
+      
       const { data: matches } = await supabase
         .from("matches")
         .select(`
             match_score,
             ai_reason,
             created_at,
-            candidates(full_name),
-            job_openings(
+            candidates!inner(full_name),
+            job_openings!inner(
+                organization_id,
                 positions(title)
             )
         `)
-        .order("match_score", { ascending: false }) // En yüksek puanlılar
+        .eq("job_openings.organization_id", orgId) // <-- Nested Filtreleme
+        .order("match_score", { ascending: false })
         .limit(5);
 
       if (matches) setTopMatches(matches);
@@ -70,7 +81,12 @@ export default function DashboardPage() {
     }
 
     fetchDashboardData();
-  }, []);
+  }, [orgId]); // Org ID değişirse (yüklenirse) tekrar çalış
+
+  // Veri yüklenirken veya Org ID beklenirken
+  if (loading && !stats.totalCandidates && !stats.activeJobs) {
+      return <div className="p-12 text-center text-slate-400"><Loader2 className="animate-spin inline mr-2"/> Loading dashboard data...</div>;
+  }
 
   return (
     <div className="space-y-8">
@@ -80,14 +96,14 @@ export default function DashboardPage() {
         <p className="text-slate-500">Welcome back, here is your recruitment overview.</p>
       </div>
 
-      {/* KPI KARTLARI (GERÇEK VERİ) */}
+      {/* KPI KARTLARI */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* CARD 1: CANDIDATES */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
                 <p className="text-sm font-medium text-slate-500 uppercase tracking-wider">Total Candidates</p>
                 <h3 className="text-3xl font-bold text-slate-800 mt-1">
-                    {loading ? "..." : stats.totalCandidates}
+                    {stats.totalCandidates}
                 </h3>
             </div>
             <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center">
@@ -100,7 +116,7 @@ export default function DashboardPage() {
             <div>
                 <p className="text-sm font-medium text-slate-500 uppercase tracking-wider">Active Recruitments</p>
                 <h3 className="text-3xl font-bold text-slate-800 mt-1">
-                    {loading ? "..." : stats.activeJobs}
+                    {stats.activeJobs}
                 </h3>
             </div>
             <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center">
@@ -113,7 +129,7 @@ export default function DashboardPage() {
             <div>
                 <p className="text-sm font-medium text-slate-500 uppercase tracking-wider">Successful Hires</p>
                 <h3 className="text-3xl font-bold text-slate-800 mt-1">
-                    {loading ? "..." : stats.totalHired}
+                    {stats.totalHired}
                 </h3>
             </div>
             <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center">
@@ -137,9 +153,7 @@ export default function DashboardPage() {
              </div>
              
              <div className="divide-y divide-slate-50">
-                {loading ? (
-                    <div className="p-6 text-center text-slate-400">Loading AI data...</div>
-                ) : topMatches.length === 0 ? (
+                {topMatches.length === 0 ? (
                     <div className="p-6 text-center text-slate-400 italic">No matches generated yet. Start a recruitment to see results.</div>
                 ) : (
                     topMatches.map((match, i) => (
@@ -157,7 +171,10 @@ export default function DashboardPage() {
                                     {match.candidates?.full_name || "Unknown Candidate"}
                                 </div>
                                 <div className="text-xs text-slate-500">
-                                    Recommended for <span className="font-medium text-slate-700">{match.job_openings?.positions?.title}</span>
+                                    Recommended for <span className="font-medium text-slate-700">
+                                        {/* @ts-ignore: Nested join bazen tip hatası verebilir */}
+                                        {match.job_openings?.positions?.title}
+                                    </span>
                                 </div>
                             </div>
                             
@@ -174,7 +191,7 @@ export default function DashboardPage() {
              </div>
           </div>
 
-          {/* SAĞ: HIZLI AKSİYONLAR (STATİK) */}
+          {/* SAĞ: HIZLI AKSİYONLAR */}
           <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl shadow-lg p-6 text-white flex flex-col justify-between">
              <div>
                 <div className="w-12 h-12 bg-white/10 rounded-lg flex items-center justify-center mb-4">

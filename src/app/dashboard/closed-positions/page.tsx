@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { DEMO_ORG_ID } from "@/lib/constants";
+import { useAuth } from "@/context/AuthProvider"; // <-- YENİ BEYİN
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Calendar, CheckCircle, XCircle, User, Briefcase, Clock, Archive } from "lucide-react";
+import { Loader2, Calendar, CheckCircle, XCircle, Briefcase, Clock, Archive } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -19,14 +19,16 @@ type ClosedJob = {
 };
 
 export default function ClosedPositionsPage() {
+  const { orgId } = useAuth(); // <-- DİNAMİK ID
   const [closedJobs, setClosedJobs] = useState<ClosedJob[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchClosedJobs = async () => {
+    if (!orgId) return;
+
     setLoading(true);
     
     // Sadece 'closed' statüsündeki ilanları çek
-    // İlişkili tablolardan Pozisyon Adını ve Aday Adını al
     const { data, error } = await supabase
       .from("job_openings")
       .select(`
@@ -37,19 +39,18 @@ export default function ClosedPositionsPage() {
         positions(title),
         candidates(full_name)
       `)
-      .eq("organization_id", DEMO_ORG_ID)
+      .eq("organization_id", orgId) // <-- KENDİ ŞİRKETİMİZ
       .eq("status", "closed")
       .order("closed_at", { ascending: false });
 
     if (error) {
       console.error("Error:", error);
     } else {
-      // Veriyi düzleştir
       const formatted = data.map((job: any) => ({
         id: job.id,
         position_title: job.positions?.title || "Unknown Position",
         created_at: job.created_at,
-        closed_at: job.closed_at || job.created_at, // Eğer tarih yoksa oluşturma tarihini baz al
+        closed_at: job.closed_at || job.created_at,
         close_reason: job.close_reason,
         hired_candidate_name: job.candidates?.full_name
       }));
@@ -60,9 +61,8 @@ export default function ClosedPositionsPage() {
 
   useEffect(() => {
     fetchClosedJobs();
-  }, []);
+  }, [orgId]);
 
-  // İki tarih arasındaki gün farkını hesapla
   const calculateDuration = (start: string, end: string) => {
     const d1 = new Date(start);
     const d2 = new Date(end);
@@ -70,6 +70,10 @@ export default function ClosedPositionsPage() {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
     return diffDays;
   };
+
+  if (loading && closedJobs.length === 0) {
+      return <div className="p-12 text-center text-slate-400"><Loader2 className="animate-spin inline mr-2"/> Loading archive...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -94,14 +98,11 @@ export default function ClosedPositionsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? (
-               <TableRow><TableCell colSpan={4} className="h-24 text-center"><Loader2 className="animate-spin inline mr-2"/> Loading archive...</TableCell></TableRow>
-            ) : closedJobs.length === 0 ? (
+            {closedJobs.length === 0 ? (
                <TableRow><TableCell colSpan={4} className="h-32 text-center text-slate-400">No closed positions found yet.</TableCell></TableRow>
             ) : (
               closedJobs.map((job) => (
                 <TableRow key={job.id} className="group hover:bg-slate-50/50">
-                  {/* POZİSYON ADI */}
                   <TableCell>
                     <div className="font-bold text-slate-800 flex items-center gap-2">
                         <Briefcase size={16} className="text-slate-400"/>
@@ -110,7 +111,6 @@ export default function ClosedPositionsPage() {
                     <div className="text-xs text-slate-400 mt-1 pl-6">ID: {job.id.slice(0,6)}</div>
                   </TableCell>
                   
-                  {/* ZAMAN ÇİZELGESİ */}
                   <TableCell>
                     <div className="space-y-1 text-sm">
                         <div className="flex items-center gap-2 text-slate-600">
@@ -128,7 +128,6 @@ export default function ClosedPositionsPage() {
                     </div>
                   </TableCell>
 
-                  {/* SONUÇ (HIRED / CANCELLED) */}
                   <TableCell>
                     {job.close_reason === 'hired' ? (
                         <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-green-200 px-3 py-1">
@@ -141,7 +140,6 @@ export default function ClosedPositionsPage() {
                     )}
                   </TableCell>
 
-                  {/* İŞE ALINAN KİŞİ */}
                   <TableCell>
                     {job.close_reason === 'hired' && job.hired_candidate_name ? (
                         <div className="flex items-center gap-3 bg-blue-50 p-2 rounded-lg border border-blue-100 w-fit pr-4">
