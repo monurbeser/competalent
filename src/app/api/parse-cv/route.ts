@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
-import { DEMO_ORG_ID } from "@/lib/constants";
 import PDFParser from "pdf2json";
+import { authenticateRequest } from "@/lib/apiAuth";
 
 export const runtime = 'nodejs';
 
@@ -10,15 +9,21 @@ export async function POST(req: NextRequest) {
   console.log("--- GELİŞMİŞ CV ANALİZİ BAŞLADI ---");
 
   try {
+    const auth = await authenticateRequest(req);
+    if ("error" in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const { supabase, orgId } = auth;
     const formData = await req.formData();
     const file = formData.get("file") as File;
+    const requestedOrgId = formData.get("orgId")?.toString();
 
     if (!file) return NextResponse.json({ error: "Dosya yok" }, { status: 400 });
+    if (requestedOrgId && requestedOrgId !== orgId) {
+      return NextResponse.json({ error: "Organization mismatch." }, { status: 403 });
+    }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     // 1. Storage'a Yükle
@@ -77,7 +82,7 @@ export async function POST(req: NextRequest) {
       .from("candidates")
       .insert([
         {
-          organization_id: DEMO_ORG_ID,
+          organization_id: orgId,
           full_name: parsedData.full_name || "Unknown Candidate",
           email: parsedData.email || "pending@extraction.com",
           phone: parsedData.phone,

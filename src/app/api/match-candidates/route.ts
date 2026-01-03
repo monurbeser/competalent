@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
-import { DEMO_ORG_ID } from "@/lib/constants";
+import { authenticateRequest } from "@/lib/apiAuth";
 
 export const runtime = 'nodejs'; // Timeout süresini uzatır
 
@@ -9,11 +8,24 @@ export async function POST(req: NextRequest) {
   try {
     const { openingId, positionTitle, description, skills } = await req.json();
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    const auth = await authenticateRequest(req);
+    if ("error" in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const { orgId, supabase } = auth;
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // İlanın kullanıcının organizasyonuna ait olduğunu doğrula
+    const { data: openingRecord, error: openingError } = await supabase
+      .from("job_openings")
+      .select("organization_id")
+      .eq("id", openingId)
+      .single<{ organization_id: string }>();
+
+    if (openingError || !openingRecord || openingRecord.organization_id !== orgId) {
+      return NextResponse.json({ error: "Unauthorized access to job opening." }, { status: 403 });
+    }
 
     // 1. Önce bu ilana ait eski eşleşmeleri temizle (Temiz sayfa)
     await supabase.from("matches").delete().eq("job_opening_id", openingId);
@@ -22,7 +34,7 @@ export async function POST(req: NextRequest) {
     const { data: candidates } = await supabase
       .from("candidates")
       .select("id, full_name, parsed_data, summary")
-      .eq("organization_id", DEMO_ORG_ID);
+      .eq("organization_id", orgId);
 
     if (!candidates || candidates.length === 0) {
       return NextResponse.json({ success: false, message: "Havuzda hiç aday yok." });
