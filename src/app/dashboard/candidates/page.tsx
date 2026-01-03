@@ -71,7 +71,14 @@ export default function CandidatesPage() {
     formPayload.append("orgId", orgId); 
 
     try {
-      const response = await fetch("/api/parse-cv", { method: "POST", body: formPayload });
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Session expired. Please login again.");
+
+      const response = await fetch("/api/parse-cv", { 
+        method: "POST", 
+        body: formPayload,
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Upload failed");
       fetchCandidates(); 
@@ -88,8 +95,12 @@ export default function CandidatesPage() {
 
     setIsReanalyzing(true);
     try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Session expired. Please login again.");
+
         const response = await fetch("/api/re-analyze-cv", {
             method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}` },
             body: JSON.stringify({
                 candidateId: selectedCandidate.id,
                 resumeUrl: selectedCandidate.resume_url
