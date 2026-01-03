@@ -1,31 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
-import { DEMO_ORG_ID } from "@/lib/constants";
 import PDFParser from "pdf2json";
+import { authenticateRequest } from "@/lib/apiAuth";
 
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
-    const { candidateId, resumeUrl } = await req.json();
+    const auth = await authenticateRequest(req);
+    if ("error" in auth) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
 
-    if (!candidateId || !resumeUrl) {
+    const { supabase, orgId } = auth;
+    const { candidateId, resumeUrl: requestedResumeUrl } = await req.json();
+
+    if (!candidateId) {
       return NextResponse.json({ error: "Missing candidate ID or URL" }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     console.log("Re-analyzing:", candidateId);
 
+    const { data: candidateRecord, error: candidateError } = await supabase
+      .from("candidates")
+      .select("organization_id, resume_url")
+      .eq("id", candidateId)
+      .single();
+
+    if (candidateError || !candidateRecord || candidateRecord.organization_id !== orgId) {
+      return NextResponse.json({ error: "Unauthorized candidate access." }, { status: 403 });
+    }
+
+    const resumeUrl = candidateRecord.resume_url || requestedResumeUrl;
+    if (!resumeUrl) {
+      return NextResponse.json({ error: "Resume URL not found for candidate." }, { status: 400 });
+    }
+
     // 1. Dosyayı Supabase Storage'dan İndir
     // URL'den dosya yolunu (path) ayıklamamız lazım. 
     // Örnek URL: .../storage/v1/object/public/resumes/1735...pdf
-    const path = resumeUrl.split("/resumes/")[1];
+    const path = resumeUrl?.split("/resumes/")[1];
     
     if (!path) {
         return NextResponse.json({ error: "Invalid resume URL format" }, { status: 400 });

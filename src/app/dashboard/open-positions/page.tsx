@@ -174,12 +174,16 @@ export default function OpenPositionsPage() {
             savedJobId = newJob.id;
         }
 
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Session expired. Please login again.");
+
         // AI Analizini Tetikle
         const posTitle = positions.find(p => p.id === selectedPosId)?.title;
         
         // Not: API tarafında da Auth kontrolü yapılması gerekebilir ileride
         await fetch("/api/match-candidates", {
             method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}` },
             body: JSON.stringify({
                 openingId: savedJobId,
                 positionTitle: posTitle,
@@ -250,8 +254,12 @@ export default function OpenPositionsPage() {
     alert("AI Analysis started... Please wait a few seconds then click the accordion.");
 
     try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Session expired. Please login again.");
+
         const response = await fetch("/api/match-candidates", {
             method: "POST",
+            headers: { Authorization: `Bearer ${session.access_token}` },
             body: JSON.stringify({
                 openingId: job.id,
                 positionTitle: job.position_title,
